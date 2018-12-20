@@ -15,50 +15,6 @@
 /* Driver local definitions.                                                 */
 /*===========================================================================*/
 
-/* Registers */
-#define STATUS_REG_AUX      0x07
-#define OUT_ADC1_L          0x08
-#define OUT_ADC1_H          0x09
-#define OUT_ADC2_L          0x0A
-#define OUT_ADC2_H          0x0B
-#define OUT_ADC3_L          0x0C
-#define OUT_ADC3_H          0x0D
-#define WHO_AM_I            0x0F
-#define CTRL_REG0           0x1E
-#define TEMP_CFG_REG        0x1F
-#define CTRL_REG1           0X20
-#define CTRL_REG2           0x21
-#define CTRL_REG3           0x22
-#define CTRL_REG4           0x23
-#define CTRL_REG5           0x24
-#define CTRL_REG6           0x25
-#define REFERENCE           0x26
-#define STATUS_REG          0x27
-#define OUT_X_L             0x28
-#define OUT_X_H             0x29
-#define OUT_Y_L             0x2A
-#define OUT_Y_H             0x2B
-#define OUT_Z_L             0x2C
-#define OUT_Z_H             0x2D
-#define FIFO_CTRL_REG       0x2E
-#define FIFO_SRC_REG        0x2F
-#define INT1_CFG            0x30
-#define INT1_SRC            0x31
-#define INT1_THS            0x32
-#define INT1_DURATION       0x33
-#define INT2_CFG            0x34
-#define INT2_SRC            0x35
-#define INT2_THS            0x36
-#define INT2_DURATION       0x37
-#define CLICK_CFG           0x38
-#define CLICK_SRC           0x39
-#define CLICK_THS           0x3A
-#define TIME_LIMIT          0x3B
-#define TIME_LATENCY        0x3C
-#define TIME WINDOW         0x3D
-#define ACT_THS             0x3E
-#define ACT_DUR             0x3F
-
 /*===========================================================================*/
 /* Driver exported variables.                                                */
 /*===========================================================================*/
@@ -70,6 +26,51 @@
 /*===========================================================================*/
 /* Driver local functions.                                                   */
 /*===========================================================================*/
+#if (LIS3DH_USE_SPI) || defined(__DOXYGEN__)
+/**
+ * @brief   Reads a generic register value using SPI.
+ * @pre     The SPI interface must be initialized and the driver started.
+ *
+ * @param[in] spip      pointer to the SPI interface
+ * @param[in] reg       starting register address
+ * @param[in] n         number of adjacent registers to write
+ * @param[in] b         pointer to a buffer.
+ */
+static void lis3dhSPIReadRegister(SPIDriver *spip, uint8_t reg, size_t n,
+                                   uint8_t* b) {
+  uint8_t cmd;
+  cmd = reg | LIS3DH_RW;
+  if (n > 1) {
+     cmd |= LIS3DH_MS;
+  }
+  spiSelect(spip);
+  spiSend(spip, 1, &cmd);
+  spiReceive(spip, n, b);
+  spiUnselect(spip);
+}
+
+/**
+ * @brief   Writes a value into a generic register using SPI.
+ * @pre     The SPI interface must be initialized and the driver started.
+ *
+ * @param[in] spip      pointer to the SPI interface
+ * @param[in] reg       starting register address
+ * @param[in] n         number of adjacent registers to write
+ * @param[in] b         pointer to a buffer of values.
+ */
+static void lis3dhSPIWriteRegister(SPIDriver *spip, uint8_t reg, size_t n,
+                                    uint8_t* b) {
+  uint8_t cmd;
+  cmd = reg;
+  if (n > 1) {
+     cmd |= LIS3DH_MS;
+  }
+  spiSelect(spip);
+  spiSend(spip, 1, &cmd);
+  spiSend(spip, n, b);
+  spiUnselect(spip);
+}
+#endif /* LIS3DH_USE_SPI */
 
 /*===========================================================================*/
 /* Driver exported functions.                                                */
@@ -91,9 +92,9 @@ void lis3dhInit(void) {}
  *
  * @init
  */
-void lis3dhObjectInit(lis3dhDriver *lis3dhp) {
-    lis3dhp->state = LIS3DH_STOP;
+void lis3dhObjectInit(LIS3DHDriver *lis3dhp) {
     lis3dhp->config = NULL;
+    lis3dhp->state = LIS3DH_STOP;
 }
 
 /**
@@ -105,18 +106,38 @@ void lis3dhObjectInit(lis3dhDriver *lis3dhp) {
  * @api
  */
 
-void ws281xStart(LIS3DHDriver *lis3dhp, const lis3dhConfig *config) {
+void lis3dhStart(LIS3DHDriver *lis3dhp, const lis3dhConfig *config) {
     osalDbgCheck((lis3dhp != NULL) && (config != NULL));
 
-    osalSysLock();
+    
     osalDbgAssert((lis3dhp->state == LIS3DH_STOP) ||
         (lis3dhp->state == LIS3DH_READY), "invalid state");
     lis3dhp->config = config;
-    osalSysUnlock();
+    
+    uint8_t cr = 0;
+    {
+        cr = LIS3DH_CTRL_REG1_XEN | LIS3DH_CTRL_REG1_YEN | LIS3DH_CTRL_REG1_YEN |
+            lis3dhp->config->outputdatarate;
+        cr |= lis3dhp->config->blockdataupdate;
+    }
 
-    osalSysLock();
+#if LIS3DH_USE_SPI
+#if LIS3DH_SHARED_SPI
+    spiAcquireBus(lis3dhp->config->spip);
+#endif /* LIS3DH_SHARED_SPI */
+    spiStart(lis3dhp->config->spip, lis3dhp->config->spicfg);
+
+    lis3dhSPIWriteRegister(lis3dhp->config->spip, LIS3DH_CTRL_REG1, 1, &cr);
+
+#if LIS3DH_SHARED_SPI
+    spiReleaseBus(lis3dhp->config->spip);
+#endif /* LIS3DH_SHARED_SPI */
+#endif /* LIS3DH_USE_SPI */
+
+    /* This is the Accelerometer transient recovery time */
+    osalThreadSleepMilliseconds(10);
+
     lis3dhp->state = LIS3DH_ACTIVE;
-    osalSysUnlock();
 }
 
 /**
@@ -134,9 +155,82 @@ void lis3dhStop(LIS3DHDriver *lis3dhp) {
         (lis3dhp->state == LIS3DH_READY),
             "invalid state");
 
+    if (lis3dhp->state == LIS3DH_READY) {
+#if (LIS3DH_USE_SPI)
+#if	LIS3DH_SHARED_SPI
+    spiAcquireBus(lis3dhp->config->spip);
+        spiStart(lis3dhp->config->spip,
+             lis3dhp->config->spicfg);
+#endif /* LIS3DH_SHARED_SPI */
+        /* Disabling all axes and enabling power down mode.*/
+        uint8_t cr1 = 0;
+        lis3dhSPIWriteRegister(lis3dhp->config->spip, LIS3DH_CTRL_REG1,
+                           1, &cr1);
+
+        spiStop(lis3dhp->config->spip);
+#if	LIS3DH_SHARED_SPI
+        spiReleaseBus(lis3dhp->config->spip);
+#endif /* LIS3DH_SHARED_SPI */    		
+#endif /* LIS3DH_USE_SPI */
+    }	
+
     lis3dhp->state = LIS3DH_STOP;
     osalSysUnlock();
 }
+
+/**
+ * @brief   Retrieves raw data from the BaseAccelerometer.
+ * @note    This data is retrieved from MEMS register without any algebraical
+ *          manipulation.
+ * @note    The axes array must be at least the same size of the
+ *          BaseAccelerometer axes number.
+ *
+ * @param[in] ip        pointer to @p BaseAccelerometer interface.
+ * @param[out] axes     a buffer which would be filled with raw data.
+ *
+ * @return              The operation status.
+ * @retval MSG_OK       if the function succeeded.
+ * @retval MSG_RESET    if one or more I2C errors occurred, the errors can
+ *                      be retrieved using @p i2cGetErrors().
+ * @retval MSG_TIMEOUT  if a timeout occurred before operation end.
+ */
+msg_t lis3dhReadRaw(LIS3DHDriver *lis3dhp, int32_t axes[]) {
+  
+    msg_t msg = MSG_OK;
+
+    osalDbgCheck((lis3dhp != NULL) && (axes != NULL));
+
+    osalDbgAssert((lis3dhp->state == LIS3DH_READY),
+                "acc_read_raw(), invalid state");
+
+#if LIS3DH_USE_SPI
+#if	LIS3DH_SHARED_SPI
+    osalDbgAssert((lis3dhp->config->spip->state == SPI_READY),
+                "acc_read_raw(), channel not ready");
+
+    spiAcquireBus(lis3dhp->config->spip);
+    spiStart(lis3dhp->config->spip,
+           lis3dhp->config->spicfg);
+#endif /* LIS3DH_SHARED_SPI */
+
+    uint8_t buff [LIS3DH_NUMBER_OF_AXES * 2];
+    lis3dhSPIReadRegister(lis3dhp->config->spip, LIS3DH_OUT_X_L,
+                         LIS3DH_NUMBER_OF_AXES * 2, buff);
+
+#if	LIS3DH_SHARED_SPI
+    spiReleaseBus(lis3dhp->config->spip);
+#endif /* LIS3DH_SHARED_SPI */
+#endif /* LIS3DH_USE_SPI */
+
+    int16_t tmp;
+    uint8_t i;
+    for(i = 0; i < LIS3DH_NUMBER_OF_AXES; i++) {
+        tmp = buff[2 * i] + (buff[2 * i + 1] << 8);
+        axes[i] = (int32_t)tmp;
+    }
+    return msg;
+}
+
 
 #endif /* HAL_USE_LIS3DH */
 
