@@ -116,9 +116,8 @@ void lis3dhStart(LIS3DHDriver *lis3dhp, const lis3dhConfig *config) {
     
     uint8_t cr = 0;
     {
-        cr = LIS3DH_CTRL_REG1_XEN | LIS3DH_CTRL_REG1_YEN | LIS3DH_CTRL_REG1_YEN |
+        cr = LIS3DH_CTRL_REG1_XEN | LIS3DH_CTRL_REG1_YEN | LIS3DH_CTRL_REG1_ZEN |
             lis3dhp->config->outputdatarate;
-        cr |= lis3dhp->config->blockdataupdate;
     }
 
 #if LIS3DH_USE_SPI
@@ -128,6 +127,18 @@ void lis3dhStart(LIS3DHDriver *lis3dhp, const lis3dhConfig *config) {
     spiStart(lis3dhp->config->spip, lis3dhp->config->spicfg);
 
     lis3dhSPIWriteRegister(lis3dhp->config->spip, LIS3DH_CTRL_REG1, 1, &cr);
+ 
+    cr = 0;
+    {
+        cr = lis3dhp->config->blockdataupdate | lis3dhp->config->fullscale;
+    }
+    lis3dhSPIWriteRegister(lis3dhp->config->spip, LIS3DH_CTRL_REG4, 1, &cr);
+
+    if (config->temp_cfg > 0)
+    {
+        cr = config->temp_cfg;
+        lis3dhSPIWriteRegister(lis3dhp->config->spip, LIS3DH_TEMP_CFG_REG, 1, &cr);
+    }
 
 #if LIS3DH_SHARED_SPI
     spiReleaseBus(lis3dhp->config->spip);
@@ -200,7 +211,7 @@ msg_t lis3dhReadRaw(LIS3DHDriver *lis3dhp, int32_t axes[]) {
 
     osalDbgCheck((lis3dhp != NULL) && (axes != NULL));
 
-    osalDbgAssert((lis3dhp->state == LIS3DH_READY),
+    osalDbgAssert((lis3dhp->state == LIS3DH_ACTIVE),
                 "acc_read_raw(), invalid state");
 
 #if LIS3DH_USE_SPI
@@ -231,7 +242,51 @@ msg_t lis3dhReadRaw(LIS3DHDriver *lis3dhp, int32_t axes[]) {
     return msg;
 }
 
+/**
+ * @brief   Retrieves temperatue data from the accelerometer.
+ *
+ * @param[in] ip        pointer to @p BaseAccelerometer interface.
+ * @param[out] temp     point to target temperatur value
+ *
+ * @return              The operation status.
+ * @retval MSG_OK       if the function succeeded.
+ * @retval MSG_RESET    if one or more I2C errors occurred, the errors can
+ *                      be retrieved using @p i2cGetErrors().
+ * @retval MSG_TIMEOUT  if a timeout occurred before operation end.
+ */
 
+msg_t lis3dhReadTemp(LIS3DHDriver *lis3dhp, int16_t* temp)
+{
+    msg_t msg = MSG_OK;
+
+    osalDbgCheck(lis3dhp != NULL);
+
+    osalDbgAssert((lis3dhp->state == LIS3DH_ACTIVE),
+                "acc_read_raw(), invalid state");
+
+#if LIS3DH_USE_SPI
+#if	LIS3DH_SHARED_SPI
+    osalDbgAssert((lis3dhp->config->spip->state == SPI_READY),
+                "acc_read_raw(), channel not ready");
+
+    spiAcquireBus(lis3dhp->config->spip);
+    spiStart(lis3dhp->config->spip,
+           lis3dhp->config->spicfg);
+#endif /* LIS3DH_SHARED_SPI */
+
+    uint8_t buff [2];
+    lis3dhSPIReadRegister(lis3dhp->config->spip, LIS3DH_OUT_ADC3_L,
+                         2, buff);
+
+#if	LIS3DH_SHARED_SPI
+    spiReleaseBus(lis3dhp->config->spip);
+#endif /* LIS3DH_SHARED_SPI */
+#endif /* LIS3DH_USE_SPI */
+
+    int32_t rawTemp = (buff[0] + (buff[1] << 8)) >> 6;
+    *temp = (((((rawTemp + 400) * 1000 )/ 800) * 125) / 1000) - 40;
+    return msg;
+}
 #endif /* HAL_USE_LIS3DH */
 
 /** @} */

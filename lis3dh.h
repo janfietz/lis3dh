@@ -424,6 +424,11 @@ typedef struct {
    */
   lis3dh_bdu_t         blockdataupdate;
 
+    /**
+   * @brief   LIS3DH Temperatur config.
+   */
+  uint8_t         temp_cfg;
+
 } lis3dhConfig;
 
 
@@ -457,6 +462,7 @@ extern "C" {
   void lis3dhStart(LIS3DHDriver *lis3dhp, const lis3dhConfig *config);
   void lis3dhStop(LIS3DHDriver *lis3dhp);
   msg_t lis3dhReadRaw(LIS3DHDriver *lis3dhp, int32_t axes[]);
+  msg_t lis3dhReadTemp(LIS3DHDriver *lis3dhp, int16_t* temp);
 #ifdef __cplusplus
 }
 #endif
